@@ -1,0 +1,138 @@
+#!/bin/bash
+# Rendered by Terraform. Writes the runner config and a systemd unit, then starts it.
+# Bash in the script body below avoids the "dollar + brace" form because Terraform
+# templates would try to interpolate it.
+set -euo pipefail
+
+mkdir -p /opt/gh-runner
+cat > /opt/gh-runner/env <<'ENV'
+REGION=${region}
+ASG_NAME=${asg_name}
+PAT_PARAMETER=${pat_parameter}
+REPO=${repo}
+RUNNER_LABEL=${runner_label}
+IDLE_TIMEOUT_MINUTES=${idle_timeout_minutes}
+MAX_JOB_MINUTES=${max_job_minutes}
+KEEP_FAILED_INSTANCES=${keep_failed_instances}
+ENV
+
+cat > /opt/gh-runner/run.sh <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+source /opt/gh-runner/env
+export AWS_DEFAULT_REGION=$REGION
+
+log() { echo "[gh-runner] $(date -u +%H:%M:%S) $*"; }
+
+imds() {
+  local t
+  t=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+  curl -fsS -H "X-aws-ec2-metadata-token: $t" "http://169.254.169.254/latest/meta-data/$1"
+}
+
+INSTANCE_ID=$(imds instance-id)
+
+# Always leave: drop scale-in protection, terminate, and lower the ASG's desired count.
+finish() {
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ "$KEEP_FAILED_INSTANCES" = "true" ]; then
+    log "bootstrap failed (rc=$rc); keeping instance for debugging"
+    return
+  fi
+  log "terminating $INSTANCE_ID (rc=$rc)"
+  aws autoscaling set-instance-protection --instance-ids "$INSTANCE_ID" \
+    --auto-scaling-group-name "$ASG_NAME" --no-protected-from-scale-in || true
+  aws autoscaling terminate-instance-in-auto-scaling-group --instance-id "$INSTANCE_ID" \
+    --should-decrement-desired-capacity || shutdown -h now
+}
+trap finish EXIT
+
+log "installing packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q docker.io docker-buildx docker-compose-v2 git jq unzip curl \
+  build-essential python3-venv python3-pip
+systemctl enable --now docker
+
+if ! command -v aws >/dev/null; then
+  curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+fi
+
+id runner >/dev/null 2>&1 || useradd -m -s /bin/bash runner
+usermod -aG docker runner
+echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner
+chmod 440 /etc/sudoers.d/runner
+
+PAT=$(aws ssm get-parameter --name "$PAT_PARAMETER" --with-decryption --query Parameter.Value --output text)
+gh_api() {
+  curl -fsS -H "Authorization: Bearer $PAT" -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+}
+
+log "downloading actions runner"
+VERSION=$(gh_api https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | sed 's/^v//')
+RDIR=/home/runner/actions-runner
+mkdir -p "$RDIR"
+curl -fsSL "https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-linux-x64-$VERSION.tar.gz" \
+  | tar -xz -C "$RDIR"
+"$RDIR/bin/installdependencies.sh"
+chown -R runner:runner /home/runner
+
+log "registering just-in-time runner"
+BODY=$(jq -n --arg n "aws-$INSTANCE_ID" --arg l "$RUNNER_LABEL" \
+  '{name: $n, runner_group_id: 1, labels: [$l], work_folder: "_work"}')
+RESP=$(gh_api -X POST "https://api.github.com/repos/$REPO/actions/runners/generate-jitconfig" -d "$BODY")
+JIT=$(echo "$RESP" | jq -r .encoded_jit_config)
+RUNNER_ID=$(echo "$RESP" | jq -r .runner.id)
+
+log "runner $RUNNER_ID started"
+cd "$RDIR"
+sudo -u runner ./run.sh --jitconfig "$JIT" &
+PID=$!
+
+START=$(date +%s)
+SEEN_BUSY=0
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 20
+  ELAPSED=$(( $(date +%s) - START ))
+  if [ "$SEEN_BUSY" -eq 0 ]; then
+    BUSY=$(gh_api "https://api.github.com/repos/$REPO/actions/runners/$RUNNER_ID" | jq -r .busy || echo unknown)
+    [ "$BUSY" = "true" ] && SEEN_BUSY=1 && log "picked up a job"
+    if [ "$SEEN_BUSY" -eq 0 ] && [ "$ELAPSED" -gt $(( IDLE_TIMEOUT_MINUTES * 60 )) ]; then
+      log "idle for $IDLE_TIMEOUT_MINUTES min, deregistering"
+      gh_api -X DELETE "https://api.github.com/repos/$REPO/actions/runners/$RUNNER_ID" || true
+      kill "$PID" || true
+      break
+    fi
+  fi
+  if [ "$ELAPSED" -gt $(( MAX_JOB_MINUTES * 60 )) ]; then
+    log "hit the $MAX_JOB_MINUTES min safety cap"
+    kill "$PID" || true
+    gh_api -X DELETE "https://api.github.com/repos/$REPO/actions/runners/$RUNNER_ID" || true
+    break
+  fi
+done
+wait "$PID" || true
+log "runner exited"
+SCRIPT
+chmod 700 /opt/gh-runner/run.sh
+
+cat > /etc/systemd/system/gh-runner.service <<'UNIT'
+[Unit]
+Description=Ephemeral GitHub Actions runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/gh-runner/run.sh
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now --no-block gh-runner.service

@@ -1,0 +1,24 @@
+# Copy to devops-labs/.github/workflows/runner-smoke.yaml, then run it from the Actions tab.
+# Proves the whole chain: webhook -> Lambda -> ASG -> instance -> job -> instance terminates.
+name: runner-smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: aws-m7i
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python --version
+          docker version
+          docker buildx version
+          docker run --rm hello-world
+          df -h /
+          free -h
+          nproc
