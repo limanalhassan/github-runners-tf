@@ -40,7 +40,7 @@ these runners: `44859496610`.
                                    │ 3. ASG desired = min(max_runners, that count)
                                    │    (only ever raises it, never lowers)
                                    ▼
-                      Auto Scaling Group "gh-runners-asg" (min 0, max 6)
+                      Auto Scaling Group "gh-runners-asg" (min 0, max 8)
                                    │ launches m7i-flex.large (Ubuntu 24.04)
                                    ▼
                       user-data bootstrap on the instance:
@@ -183,9 +183,9 @@ Defaults live in `variables.tf`. The ones you are most likely to touch:
 
 | Variable | Default | Current | Meaning |
 |---|---|---|---|
-| `max_runners` | 3 | **6** | Max instances at once. Must match `max-parallel` in `ci.yaml` |
+| `max_runners` | 3 | **8** | Max instances at once. Must match `max-parallel` in `ci.yaml` |
 | `on_demand_base_capacity` | 1 | 1 | First N runners are On-Demand |
-| `on_demand_percentage_above_base` | 0 | 0 | Rest are Spot. `100` = no Spot |
+| `on_demand_percentage_above_base` | 0 | **100** | 100 = all On-Demand (current, while on credits). 0 = Spot for runners 2+ |
 | `instance_type` | `m7i-flex.large` | same | 2 vCPU, 8 GiB |
 | `root_volume_size_gb` | 50 | 50 | gp3 disk per runner |
 | `idle_timeout_minutes` | 15 | 15 | Runner with no job terminates after this |
@@ -248,7 +248,7 @@ jobs:
     runs-on: aws-m7i
     strategy:
       fail-fast: false
-      max-parallel: 6        # keep equal to max_runners
+      max-parallel: 8        # keep equal to max_runners
       matrix: ...
 ```
 
@@ -288,7 +288,7 @@ curl -s -X POST "$(terraform output -raw webhook_url)" -d '{}'   # -> bad signat
 ```bash
 aws lambda invoke --function-name gh-runners-scaler --payload '{"reconcile":true}' \
   --cli-binary-format raw-in-base64-out --region us-east-1 --profile devopslab /dev/stdout
-# {"current": 0, "target": 0, "max": 6, "scaled": false}
+# {"current": 0, "target": 0, "max": 8, "scaled": false}
 ```
 
 ### 6c. Smoke test (end to end)
