@@ -3,7 +3,7 @@
 region       = "us-east-1"
 aws_profile  = "devopslab"
 github_owner = "limanalhassan"
-github_repos = ["devops-labs", "contract-opportunities"]
+github_repos = ["devops-labs", "automations"]
 runner_label = "aws-m7i"
 
 max_runners                     = 8   # 8 x 2 vCPU = the full 16 vCPU On-Demand quota
