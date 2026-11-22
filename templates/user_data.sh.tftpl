@@ -67,7 +67,7 @@ chmod 440 /etc/sudoers.d/runner
 
 PAT=$(aws ssm get-parameter --name "$PAT_PARAMETER" --with-decryption --query Parameter.Value --output text)
 gh_api() {
-  curl -fsS -H "Authorization: Bearer $PAT" -H "Accept: application/vnd.github+json" \
+  curl -fsSL -H "Authorization: Bearer $PAT" -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" "$@"
 }
 
@@ -103,7 +103,11 @@ for r in $REPOS; do
   log "repo $r: $q queued, $idle idle runners"
   if [ "$q" -gt "$idle" ]; then REPO=$r; break; fi
 done
-[ -n "$REPO" ] || REPO=$(echo "$REPOS" | awk '{print $1}')
+if [ -z "$REPO" ]; then
+  # Another runner already took the job (or it was cancelled): leave instead of idling.
+  log "no repo has a waiting job; shutting down"
+  exit 0
+fi
 log "serving $REPO"
 
 log "registering just-in-time runner"
