@@ -12,7 +12,7 @@ resource "random_password" "webhook_secret" {
 }
 
 resource "aws_ssm_parameter" "webhook_secret" {
-  name  = "/${var.name}/${var.github_repo}/webhook-secret"
+  name  = "/${var.name}/${var.github_repos[0]}/webhook-secret"
   type  = "SecureString"
   tier  = "Standard"
   value = random_password.webhook_secret.result

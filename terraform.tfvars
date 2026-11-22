@@ -1,10 +1,10 @@
 # Copy to terraform.tfvars and adjust. Everything here has a default in variables.tf.
 
-region        = "us-east-1"
-aws_profile   = "devopslab"
-github_owner  = "limanalhassan"
-github_repo   = "devops-labs"
-runner_label  = "aws-m7i"
+region       = "us-east-1"
+aws_profile  = "devopslab"
+github_owner = "limanalhassan"
+github_repos = ["devops-labs", "contract-opportunities"]
+runner_label = "aws-m7i"
 
 max_runners                     = 8   # 8 x 2 vCPU = the full 16 vCPU On-Demand quota
 on_demand_base_capacity         = 1   # first runner On-Demand

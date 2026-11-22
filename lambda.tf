@@ -21,7 +21,7 @@ resource "aws_lambda_function" "scaler" {
 
   environment {
     variables = {
-      GITHUB_REPO              = "${var.github_owner}/${var.github_repo}"
+      GITHUB_REPOS             = join(",", [for r in var.github_repos : "${var.github_owner}/${r}"])
       RUNNER_LABEL             = var.runner_label
       ASG_NAME                 = aws_autoscaling_group.runners.name
       PAT_PARAMETER            = var.github_pat_parameter

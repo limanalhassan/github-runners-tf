@@ -21,10 +21,10 @@ variable "github_owner" {
   default     = "limanalhassan"
 }
 
-variable "github_repo" {
-  description = "Repo the runners register to."
-  type        = string
-  default     = "devops-labs"
+variable "github_repos" {
+  description = "Repos the runners serve (same owner). The first one names the webhook secret parameter."
+  type        = list(string)
+  default     = ["devops-labs"]
 }
 
 variable "github_pat_parameter" {

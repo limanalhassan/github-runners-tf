@@ -29,7 +29,7 @@ provider "aws" {
     tags = {
       Project   = var.name
       ManagedBy = "terraform"
-      Repo      = "${var.github_owner}/${var.github_repo}"
+      Owner     = var.github_owner
     }
   }
 }

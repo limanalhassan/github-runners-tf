@@ -3,7 +3,7 @@
 # region        = "us-east-1"
 # aws_profile   = "devopslab"
 # github_owner  = "limanalhassan"
-# github_repo   = "devops-labs"
+# github_repos  = ["devops-labs"]
 # runner_label  = "aws-m7i"
 
 # max_runners                     = 3

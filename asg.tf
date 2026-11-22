@@ -45,7 +45,7 @@ resource "aws_launch_template" "runner" {
     region                = var.region
     asg_name              = local.asg_name
     pat_parameter         = var.github_pat_parameter
-    repo                  = "${var.github_owner}/${var.github_repo}"
+    repos                 = join(" ", [for r in var.github_repos : "${var.github_owner}/${r}"])
     runner_label          = var.runner_label
     idle_timeout_minutes  = var.idle_timeout_minutes
     max_job_minutes       = var.max_job_minutes

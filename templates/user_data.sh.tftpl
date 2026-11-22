@@ -9,7 +9,7 @@ cat > /opt/gh-runner/env <<'ENV'
 REGION=${region}
 ASG_NAME=${asg_name}
 PAT_PARAMETER=${pat_parameter}
-REPO=${repo}
+REPOS="${repos}"
 RUNNER_LABEL=${runner_label}
 IDLE_TIMEOUT_MINUTES=${idle_timeout_minutes}
 MAX_JOB_MINUTES=${max_job_minutes}
@@ -50,7 +50,7 @@ trap finish EXIT
 log "installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q docker.io docker-buildx docker-compose-v2 git jq unzip curl \
+apt-get install -y -q docker.io docker-buildx docker-compose-v2 git gh jq unzip curl \
   build-essential python3-venv python3-pip
 systemctl enable --now docker
 
@@ -79,6 +79,32 @@ curl -fsSL "https://github.com/actions/runner/releases/download/v$VERSION/action
   | tar -xz -C "$RDIR"
 "$RDIR/bin/installdependencies.sh"
 chown -R runner:runner /home/runner
+
+# Several repos share this pool: register to the first repo with more queued jobs
+# (for our label) than idle runners already waiting on it.
+queued_jobs() {
+  local r=$1 total=0 n id
+  for st in queued in_progress; do
+    for id in $(gh_api "https://api.github.com/repos/$r/actions/runs?status=$st&per_page=100" | jq -r '.workflow_runs[].id'); do
+      n=$(gh_api "https://api.github.com/repos/$r/actions/runs/$id/jobs?filter=latest&per_page=100" \
+        | jq --arg l "$RUNNER_LABEL" '[.jobs[] | select(.status == "queued" and (.labels | index($l)))] | length')
+      total=$(( total + n ))
+    done
+  done
+  echo "$total"
+}
+idle_runners() {
+  gh_api "https://api.github.com/repos/$1/actions/runners?per_page=100" \
+    | jq --arg l "$RUNNER_LABEL" '[.runners[] | select(.status == "online" and .busy == false and (.labels | map(.name) | index($l)))] | length'
+}
+REPO=""
+for r in $REPOS; do
+  q=$(queued_jobs "$r" || echo 0); idle=$(idle_runners "$r" || echo 0)
+  log "repo $r: $q queued, $idle idle runners"
+  if [ "$q" -gt "$idle" ]; then REPO=$r; break; fi
+done
+[ -n "$REPO" ] || REPO=$(echo "$REPOS" | awk '{print $1}')
+log "serving $REPO"
 
 log "registering just-in-time runner"
 BODY=$(jq -n --arg n "aws-$INSTANCE_ID" --arg l "$RUNNER_LABEL" \

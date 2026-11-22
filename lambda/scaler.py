@@ -19,7 +19,7 @@ import urllib.request
 
 import boto3
 
-REPO = os.environ["GITHUB_REPO"]
+REPOS = [r.strip() for r in os.environ["GITHUB_REPOS"].split(",") if r.strip()]
 LABEL = os.environ["RUNNER_LABEL"]
 ASG_NAME = os.environ["ASG_NAME"]
 PAT_PARAM = os.environ["PAT_PARAMETER"]
@@ -36,9 +36,9 @@ def _param(name: str) -> str:
     return _params[name]
 
 
-def _gh(path: str) -> dict:
+def _gh(repo: str, path: str) -> dict:
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{REPO}/{path}",
+        f"https://api.github.com/repos/{repo}/{path}",
         headers={
             "Authorization": f"Bearer {_param(PAT_PARAM)}",
             "Accept": "application/vnd.github+json",
@@ -50,13 +50,14 @@ def _gh(path: str) -> dict:
 
 
 def _wanted_jobs() -> int:
-    """Jobs with our label that are queued or running, across all active workflow runs."""
+    """Jobs with our label that are queued or running, across every repo we serve."""
     count = 0
-    for status in ("queued", "in_progress"):
-        runs = _gh(f"actions/runs?status={status}&per_page=100")["workflow_runs"]
-        for run in runs:
-            jobs = _gh(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
-            count += sum(1 for j in jobs if j["status"] in ("queued", "in_progress") and LABEL in j["labels"])
+    for repo in REPOS:
+        for status in ("queued", "in_progress"):
+            runs = _gh(repo, f"actions/runs?status={status}&per_page=100")["workflow_runs"]
+            for run in runs:
+                jobs = _gh(repo, f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
+                count += sum(1 for j in jobs if j["status"] in ("queued", "in_progress") and LABEL in j["labels"])
     return count
 
 
@@ -97,6 +98,8 @@ def handler(event, _context):
         return _response(202, "ignored event")
 
     payload = json.loads(body)
+    if payload.get("repository", {}).get("full_name") not in REPOS:
+        return _response(202, "ignored repo")
     job = payload["workflow_job"]
     if payload["action"] != "queued" or LABEL not in job["labels"]:
         return _response(202, "ignored job")
